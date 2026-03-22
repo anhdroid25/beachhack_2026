@@ -1,6 +1,9 @@
+from datetime import datetime
+
 from uagents import Agent, Context
 
-from shared.models import PowerBid, BidResponse
+from shared.models import BidResponse, PowerBid, TruckStatusRequest, TruckStatusResponse
+from shared.supabase_client import supabase
 from agents.terminal.bay_manager import (
     DEMO_CHARGE_TICK_S,
     finalize_trucks_after_port,
@@ -13,10 +16,99 @@ from agents.terminal.bay_manager import (
     update_truck_status,
 )
 
-terminal = Agent(name="terminal", seed="terminal_seed", port=8010, endpoint=["http://localhost:8010/submit"])
+# Local agent: own port + HTTP submit; do not use mailbox=True (orchestrator only).
+terminal = Agent(
+    name="terminal",
+    seed="terminal_seed",
+    port=8010,
+    endpoint=["http://localhost:8010/submit"],
+    network="testnet",
+)
 
 # Tracks bid queue position across rounds
 bid_queue = []
+
+# Orchestrator sends Truck_01 / aliases; DB uses amazon_truck, etc.
+_TRUCK_ID_TO_DB_NAME = {
+    "Truck_01": "amazon_truck",
+    "Truck_02": "fedex_truck",
+    "Truck_03": "ups_truck",
+}
+
+
+def _db_name_for_truck_id(truck_id: str) -> str | None:
+    if truck_id in _TRUCK_ID_TO_DB_NAME:
+        return _TRUCK_ID_TO_DB_NAME[truck_id]
+    if truck_id in ("amazon_truck", "fedex_truck", "ups_truck"):
+        return truck_id
+    return None
+
+
+@terminal.on_message(model=TruckStatusRequest)
+async def handle_truck_status_request(
+    ctx: Context, sender: str, msg: TruckStatusRequest
+) -> None:
+    db_name = _db_name_for_truck_id(msg.truck_id)
+    if not db_name:
+        await ctx.send(
+            msg.reply_to,
+            TruckStatusResponse(
+                request_id=msg.request_id,
+                truck_id=msg.truck_id,
+                truck_status="unknown_truck_id",
+                state_of_charge=None,
+                distance_to_port=None,
+                bay=None,
+                timestamp=datetime.utcnow(),
+            ),
+        )
+        return
+
+    r = (
+        supabase.table("trucks")
+        .select("status,state_of_charge,distance_to_port,bay_id")
+        .eq("name", db_name)
+        .limit(1)
+        .execute()
+    )
+    if not r.data:
+        await ctx.send(
+            msg.reply_to,
+            TruckStatusResponse(
+                request_id=msg.request_id,
+                truck_id=msg.truck_id,
+                truck_status="not_found",
+                state_of_charge=None,
+                distance_to_port=None,
+                bay=None,
+                timestamp=datetime.utcnow(),
+            ),
+        )
+        return
+
+    row = r.data[0]
+    bay_name: str | None = None
+    bid = row.get("bay_id")
+    if bid:
+        br = supabase.table("bays").select("name").eq("id", bid).limit(1).execute()
+        if br.data:
+            bay_name = br.data[0].get("name")
+
+    soc = row.get("state_of_charge")
+    dist = row.get("distance_to_port")
+
+    await ctx.send(
+        msg.reply_to,
+        TruckStatusResponse(
+            request_id=msg.request_id,
+            truck_id=msg.truck_id,
+            truck_status=str(row.get("status") or "unknown"),
+            state_of_charge=float(soc) if soc is not None else None,
+            distance_to_port=float(dist) if dist is not None else None,
+            bay=bay_name,
+            timestamp=datetime.utcnow(),
+        ),
+    )
 
 
 @terminal.on_message(model=PowerBid)

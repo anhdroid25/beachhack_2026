@@ -21,6 +21,9 @@ class OrchestratorSettings:
     addresses: AgentAddresses
 
 
+_DEFAULT_TERMINAL = "agent1q2dsyxc0g3482s3cewzss6vf4gakd2r8znask0gpmqrnvm0p5n0fy9gsulk"
+
+
 def load_orchestrator_settings() -> OrchestratorSettings:
     return OrchestratorSettings(
         hello_text=os.getenv("ORCHESTRATOR_HELLO_TEXT", "Hello from Port-Power Nexus"),
@@ -34,11 +37,12 @@ def load_orchestrator_settings() -> OrchestratorSettings:
             ),
             terminal_agent=os.getenv(
                 "TERMINAL_AGENT_ADDRESS",
-                "agent1q2dsyxc0g3482s3cewzss6vf4gakd2r8znask0gpmqrnvm0p5n0fy9gsulk",
+                _DEFAULT_TERMINAL,
             ),
+            # Terminal implements TruckStatusRequest → TruckStatusResponse (see agents/terminal/agent.py).
             truck_status_agent=os.getenv(
                 "TRUCK_STATUS_AGENT_ADDRESS",
-                "agent://truck-status",
+                _DEFAULT_TERMINAL,
             ),
             amazon_truck_agent=os.getenv(
                 "AMAZON_TRUCK_AGENT_ADDRESS",

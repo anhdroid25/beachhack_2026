@@ -34,11 +34,14 @@ AUCTION_START_PRICE: float = float(os.environ.get("AUCTION_START_PRICE", "0.35")
 AUCTION_MIN_PRICE: float   = float(os.environ.get("AUCTION_MIN_PRICE",   "0.08"))   # $/kWh
 AUCTION_PRICE_STEP: float  = float(os.environ.get("AUCTION_PRICE_STEP",  "0.01"))   # drop per tick
 AUCTION_TICK_SECONDS: int  = int(os.environ.get("AUCTION_TICK_SECONDS",  "5"))
+GRID_AGENT_PORT: int = int(os.environ.get("GRID_AGENT_PORT", "8001"))
+# Swarm / local agents: HTTP submit only (not mailbox). Only the orchestrator uses mailbox=True.
 GRID_AGENT_USE_MAILBOX: bool = os.environ.get(
-    "GRID_AGENT_USE_MAILBOX", "true"
+    "GRID_AGENT_USE_MAILBOX", "false"
 ).lower() in {"1", "true", "yes", "on"}
 GRID_AGENT_ENDPOINT: str | None = None if GRID_AGENT_USE_MAILBOX else (
-    os.environ.get("GRID_AGENT_ENDPOINT") or None
+    os.environ.get("GRID_AGENT_ENDPOINT")
+    or f"http://127.0.0.1:{GRID_AGENT_PORT}/submit"
 )
 
 
@@ -175,9 +178,11 @@ def fetch_grid_data() -> dict:
 grid_agent = Agent(
     name     = "grid_agent",
     seed     = os.environ.get("GRID_AGENT_SEED", "grid_agent_secret_seed"),
-    port     = int(os.environ.get("GRID_AGENT_PORT", "8001")),
+    port     = GRID_AGENT_PORT,
     endpoint = GRID_AGENT_ENDPOINT,
     mailbox  = GRID_AGENT_USE_MAILBOX,
+    # Match orchestrator (testnet) so Almanac contract registration can use testnet FET.
+    network  = "testnet",
 )
 
 fund_agent_if_low(grid_agent.wallet.address())
@@ -211,30 +216,37 @@ class AuctionState:
 
 _state = AuctionState()
 
+# Stable row id for “no auction yet” — TopBar reads latest by `started_at`; orchestrator starts real auctions with new UUIDs.
+IDLE_AUCTION_ROW_ID = "grid_idle"
+
 
 @grid_agent.on_event("startup")
 async def on_startup(ctx: Context) -> None:
+    """Idle until the orchestrator sends `StartAuctionRequest` (user prompt via ASI:One / chat)."""
     sb = get_supabase()
 
     _state.reset()
-    _state.auction_id = str(uuid.uuid4())
-    _state.active     = True
+    _state.auction_id = IDLE_AUCTION_ROW_ID
+    _state.active = False
 
-    # Seed initial row
-    upsert_auction(sb, _state.auction_id, {
-        "current_price": _state.current_price,
+    upsert_auction(sb, IDLE_AUCTION_ROW_ID, {
+        "current_price": AUCTION_START_PRICE,
         "start_price":   AUCTION_START_PRICE,
         "min_price":     AUCTION_MIN_PRICE,
         "renewable_pct": 0.0,
         "grid_stress":   0.0,
-        "status":        "active",
+        "status":        "idle",
         "started_at":    datetime.now(timezone.utc).isoformat(),
     })
-    log_event(sb, "auction_start", f"Dutch auction {_state.auction_id} started at ${AUCTION_START_PRICE}/kWh")
+    log_event(
+        sb,
+        "signal",
+        "Grid idle — waiting for orchestrator to start an auction (user request).",
+    )
 
     ctx.logger.info(
-        f"[GridAgent] Auction {_state.auction_id} started. "
-        f"address={ctx.agent.address} mailbox={GRID_AGENT_USE_MAILBOX} endpoint={GRID_AGENT_ENDPOINT}"
+        f"[GridAgent] Idle (no auction). address={ctx.agent.address} "
+        f"mailbox={GRID_AGENT_USE_MAILBOX} endpoint={GRID_AGENT_ENDPOINT}"
     )
 
 

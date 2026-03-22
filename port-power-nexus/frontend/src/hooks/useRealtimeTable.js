@@ -44,18 +44,22 @@ export default function useRealtimeTable(tableName, options = {}) {
       const { data, error } = await query
       if (cancelled) return
       if (error) {
+        const msg = String(error.message ?? error)
+        const invalidKey = /invalid api key/i.test(msg)
         console.error(
           `[useRealtimeTable:${tableName}] REST error:`,
-          error.message ?? error,
+          msg,
           '| code:',
           error.code,
           '| details:',
           error.details,
           '| hint:',
           error.hint,
-          '\n→ If 401/403: check anon key + RLS (SELECT allowed for anon on public.' +
-            tableName +
-            ').'
+          invalidKey
+            ? '\n→ Invalid or outdated anon key: copy **Project Settings → API → anon public** into `SUPABASE_ANON_KEY` in repo-root `.env`, restart `npm run dev`. (Agents use `SUPABASE_KEY`; the browser cannot.)'
+            : '\n→ If 401/403: check anon key + RLS (SELECT allowed for anon on public.' +
+                tableName +
+                ').'
         )
         setRows([])
       } else {

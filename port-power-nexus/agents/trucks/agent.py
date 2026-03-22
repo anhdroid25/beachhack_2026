@@ -29,9 +29,14 @@ def stress_label(stress: float) -> str:
     return "high"
 
 # --- 3 trucks from different companies, each with private battery state ---
-truck1 = Agent(name="amazon_truck", seed="amazon_truck_seed", port=8011, endpoint=["http://localhost:8000/submit"])
-truck2 = Agent(name="fedex_truck", seed="fedex_truck_seed", port=8012, endpoint=["http://localhost:8000/submit"])
-truck3 = Agent(name="ups_truck", seed="ups_truck_seed", port=8013, endpoint=["http://localhost:8000/submit"])
+# Local agents: distinct ports, HTTP submit only (mailbox=False is the Agent default).
+_truck_kw = dict(
+    endpoint=["http://localhost:8000/submit"],
+    network="testnet",
+)
+truck1 = Agent(name="amazon_truck", seed="amazon_truck_seed", port=8011, **_truck_kw)
+truck2 = Agent(name="fedex_truck", seed="fedex_truck_seed", port=8012, **_truck_kw)
+truck3 = Agent(name="ups_truck", seed="ups_truck_seed", port=8013, **_truck_kw)
 
 # Private battery levels — not shared with competitors
 amazon_battery = 20.0

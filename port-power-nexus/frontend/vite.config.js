@@ -30,12 +30,16 @@ export default defineConfig(({ mode }) => {
   const loaded = loadEnv(mode, envDir, '')
 
   // Same names as `beachhack_2026/.env.example`: VITE_* overrides SUPABASE_* for the client bundle
-  const supabaseUrl =
-    loaded.VITE_SUPABASE_URL || loaded.SUPABASE_URL || ''
-  const supabaseAnon =
+  const supabaseUrl = (
+    loaded.VITE_SUPABASE_URL ||
+    loaded.SUPABASE_URL ||
+    ''
+  ).trim()
+  const supabaseAnon = (
     loaded.VITE_SUPABASE_ANON_KEY ||
     loaded.SUPABASE_ANON_KEY ||
     ''
+  ).trim()
 
   if (mode === 'development') {
     if (!fs.existsSync(path.join(envDir, '.env'))) {

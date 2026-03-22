@@ -1,12 +1,40 @@
+"""
+ASI:One / Agentverse Chat Protocol (mandatory) + internal swarm protocol.
+
+Uses `uagents_core.contrib.protocols.chat` (ChatMessage, ChatAcknowledgement).
+Downstream messages use `shared.models` (same types as grid / terminal agents).
+
+**uAgents 0.24.0 mailbox (Fetch.ai docs):** initialize with ``mailbox=True`` (this
+module does that). Run the agent locally; use the **Local Agent Inspector** URL from
+the logs (``…/inspect/?uri=…&address=…``). In Agentverse, open that link, click
+**Connect**, choose **Mailbox**, and finish the link. Keep the process running so the
+agent stays active in Agentverse; the mailbox client will pick up messages. Optional
+``agentverse=`` can override the Agentverse base URL via ``ORCHESTRATOR_AGENTVERSE``.
+Programmatic mailbox credentials (e.g. ``AGENTVERSE_API_KEY`` from your Agentverse
+profile) are only needed if you configure mailbox outside Inspector—PyPI 0.24 does not
+use that env var in ``Agent()``; the Inspector path is the supported default.
+
+**Ports and mailbox (one machine):** Only this orchestrator uses ``mailbox=True``.
+It still runs an ASGI server on ``ORCHESTRATOR_PORT`` / ``ORCHESTRATOR_INSPECTOR_PORT``
+(default **8002**) so **Local Agent Inspector** can POST to ``/submit`` during setup.
+Grid, trucks, and terminal use **HTTP submit** (``mailbox=False`` / omitted) and **must
+each use a different port** (e.g. Bureau :8000 for swarm, grid :8001, terminal :8010,
+trucks :8011–8013; orchestrator **8002** — do not reuse a port for two processes).
+"""
+import inspect
 import os
 import re
 import time
 from datetime import datetime
+from urllib.parse import quote
 from typing import Literal, Optional
 from uuid import uuid4
 
+import shared.env_loader  # noqa: F401 — repo root `.env` before config
+
 from pydantic import BaseModel
-from uagents import Agent, Context, Model, Protocol
+from uagents import Agent, Context, Protocol
+from uagents_core.types import DeliveryStatus
 from uagents_core.contrib.protocols.chat import (
     ChatAcknowledgement,
     ChatMessage,
@@ -15,12 +43,84 @@ from uagents_core.contrib.protocols.chat import (
     chat_protocol_spec,
 )
 
+from shared.config import load_orchestrator_settings
+from shared.models import (
+    AgentErrorResponse,
+    AuctionStarted,
+    FinalAssignmentResponse,
+    StartAuctionRequest,
+    TruckStatusRequest,
+    TruckStatusResponse,
+)
 
-try:
-    agent
-except NameError:
-    agent = Agent(name="Logistics_Orchestrator", store_message_history=True)
+SETTINGS = load_orchestrator_settings()
 
+# Orchestrator always uses Agentverse mailbox (not a direct HTTP submit endpoint).
+_ORCH_MAILBOX = True
+_ORCH_ENDPOINT = None  # never use ORCHESTRATOR_ENDPOINT for this agent; uAgents mailbox URL only
+
+
+def _local_submit_url_for_inspector() -> str:
+    """Submit URL for Local Agent Inspector (must match the process HTTP port)."""
+    port_raw = os.getenv("ORCHESTRATOR_PORT", "").strip()
+    if port_raw.isdigit():
+        return f"http://127.0.0.1:{int(port_raw)}/submit"
+    submit = os.getenv("BUREAU_SUBMIT_URL", "http://127.0.0.1:8000/submit").replace(
+        "localhost", "127.0.0.1"
+    )
+    return submit
+
+
+def _agentverse_inspector_url(agent_address: str) -> str:
+    """Local Agent Inspector (open while run_all is running). Uses 127.0.0.1 for browser LNA."""
+    submit = _local_submit_url_for_inspector()
+    return (
+        "https://agentverse.ai/inspect/?uri="
+        + quote(submit, safe="")
+        + "&address="
+        + agent_address
+    )
+_agent_kwargs = {
+    "name": "Logistics_Orchestrator",
+    "seed": os.getenv("ORCHESTRATOR_SEED", "logistics_orchestrator_seed"),
+    "store_message_history": True,
+}
+
+
+def _apply_mailbox_to_agent_kwargs(kwargs: dict) -> None:
+    """Use mailbox API-key style only if the installed uAgents supports `mailbox_auth`."""
+    params = inspect.signature(Agent.__init__).parameters
+    key = os.getenv("ORCHESTRATOR_MAILBOX_KEY", "").strip()
+    auth = os.getenv("ORCHESTRATOR_MAILBOX_AUTH", "").strip()
+    if "mailbox_auth" in params and key and auth:
+        kwargs["mailbox"] = f"{key}@agentverse.ai"
+        kwargs["mailbox_auth"] = auth
+    else:
+        kwargs["mailbox"] = True
+
+
+_apply_mailbox_to_agent_kwargs(_agent_kwargs)
+
+_agentverse_url = os.getenv("ORCHESTRATOR_AGENTVERSE", "").strip()
+if _agentverse_url:
+    _agent_kwargs["agentverse"] = _agentverse_url
+
+
+def _orchestrator_network() -> str:
+    """Fetch ledger network. Defaults to testnet so Almanac contract registration can use testnet FET."""
+    raw = os.getenv("ORCHESTRATOR_NETWORK", "").strip().lower()
+    if raw in ("mainnet", "testnet"):
+        return raw
+    return "testnet"
+
+
+_agent_kwargs["network"] = _orchestrator_network()
+# Set only for standalone runs (e.g. run_orchestrator_for_inspector.py). Bureau + run_all omit this.
+_orch_port_raw = os.getenv("ORCHESTRATOR_PORT", "").strip()
+if _orch_port_raw.isdigit():
+    _agent_kwargs["port"] = int(_orch_port_raw)
+
+orchestrator_agent = Agent(**_agent_kwargs)
 
 chat_protocol = Protocol(spec=chat_protocol_spec)
 swarm_protocol = Protocol(name="port_power_swarm", version="0.1.0")
@@ -28,23 +128,16 @@ swarm_protocol = Protocol(name="port_power_swarm", version="0.1.0")
 IntentType = Literal["start_auction_for_truck", "get_truck_status", "unknown"]
 PENDING_INDEX_KEY = "pending_request_ids"
 
-GRID_AGENT_ADDRESS = os.getenv(
-    "GRID_AGENT_ADDRESS",
-    "agent1qdrkj8c6caq7tdmk04r3277ekaukfg7ztxncx0alpddflgz995k4xun8nut",
-)
-TERMINAL_AGENT_ADDRESS = os.getenv(
-    "TERMINAL_AGENT_ADDRESS",
-    "agent1q2dsyxc0g3482s3cewzss6vf4gakd2r8znask0gpmqrnvm0p5n0fy9gsulk",
-)
-TRUCK_STATUS_AGENT_ADDRESS = os.getenv("TRUCK_STATUS_AGENT_ADDRESS", "agent://truck-status")
-ORCHESTRATOR_HELLO_TEXT = os.getenv(
-    "ORCHESTRATOR_HELLO_TEXT", "Hello from Port-Power Nexus"
-)
-ORCHESTRATOR_OUTBOUND_TIMEOUT_SECONDS = int(
-    os.getenv("ORCHESTRATOR_OUTBOUND_TIMEOUT_SECONDS", "20")
-)
+ORCHESTRATOR_HELLO_TEXT = SETTINGS.hello_text
+ORCHESTRATOR_OUTBOUND_TIMEOUT_SECONDS = SETTINGS.outbound_timeout_seconds
 
 TRUCK_PATTERN = re.compile(r"\btruck[_\-\s]?(\d{1,2})\b", re.IGNORECASE)
+# Match demo fleet names → same ids the grid uses in StartAuctionRequest
+_ALIAS_TO_TRUCK_ID = {
+    "amazon": "Truck_01",
+    "fedex": "Truck_02",
+    "ups": "Truck_03",
+}
 AUCTION_KEYWORDS = {"charge", "charging", "slot", "auction", "bid", "cleanest"}
 STATUS_KEYWORDS = {"status", "state", "progress", "update"}
 SUSTAINABILITY_KEYWORDS = {"sustainable", "renewable", "clean", "cleanest"}
@@ -55,58 +148,6 @@ class ParsedCommand(BaseModel):
     target_truck: Optional[str] = None
     requested_goal: Optional[str] = None
     original_text: str
-
-
-class StartAuctionRequest(Model):
-    request_id: str
-    truck_id: str
-    requested_goal: Optional[str]
-    original_text: str
-    reply_to: str
-    timestamp: datetime
-
-
-class AuctionStarted(Model):
-    request_id: str
-    truck_id: str
-    status: str
-    note: str
-    timestamp: datetime
-
-
-class TruckStatusRequest(Model):
-    request_id: str
-    truck_id: str
-    reply_to: str
-    timestamp: datetime
-
-
-class TruckStatusResponse(Model):
-    request_id: str
-    truck_id: str
-    truck_status: str
-    state_of_charge: Optional[float]
-    distance_to_port: Optional[float]
-    bay: Optional[str]
-    timestamp: datetime
-
-
-class FinalAssignmentResponse(Model):
-    request_id: str
-    truck_id: str
-    status: str
-    decision_summary: str
-    bay: Optional[str]
-    price: Optional[float]
-    tx_hash: Optional[str]
-    timestamp: datetime
-
-
-class AgentErrorResponse(Model):
-    request_id: str
-    source_agent: str
-    error_message: str
-    timestamp: datetime
 
 
 def extract_text(msg: ChatMessage) -> str:
@@ -133,9 +174,20 @@ def create_text_chat(text: str) -> ChatMessage:
 
 def normalize_truck_id(message: str) -> Optional[str]:
     match = TRUCK_PATTERN.search(message)
-    if not match:
-        return None
-    return f"Truck_{int(match.group(1)):02d}"
+    if match:
+        return f"Truck_{int(match.group(1)):02d}"
+    lowered = message.lower()
+    if "amazon_truck" in lowered.replace(" ", "") or re.search(
+        r"\bamazon\b", lowered
+    ):
+        return _ALIAS_TO_TRUCK_ID["amazon"]
+    if "fedex_truck" in lowered.replace(" ", "") or re.search(r"\bfedex\b", lowered):
+        return _ALIAS_TO_TRUCK_ID["fedex"]
+    if "ups_truck" in lowered.replace(" ", "") or re.search(
+        r"\bups\b", lowered
+    ):
+        return _ALIAS_TO_TRUCK_ID["ups"]
+    return None
 
 
 def extract_goal(message: str) -> Optional[str]:
@@ -183,15 +235,28 @@ def is_handshake(message: str) -> bool:
 
 
 def format_unknown_response(command: ParsedCommand) -> str:
+    lowered = command.original_text.lower()
     truck_hint = (
         f" I recognized {command.target_truck}, but I still need a charging or status request."
         if command.target_truck
         else ""
     )
+    wants_auction = any(w in lowered for w in AUCTION_KEYWORDS)
+    wants_status = any(w in lowered for w in STATUS_KEYWORDS)
+    if wants_auction and not command.target_truck:
+        return (
+            "To **start an auction**, I need **which truck** to prioritize. "
+            "Say **Truck_01** or **truck 1**, or **amazon** / **fedex** / **ups**. "
+            'Example: "Start an auction for Truck_01" or "charging auction for amazon".'
+        )
+    if wants_status and not command.target_truck:
+        return (
+            "For **status**, name the truck: e.g. **Truck_02**, **truck 2**, or **fedex**."
+        )
     return (
         "I can coordinate charging requests for the Port-Power Nexus swarm."
         f"{truck_hint} Try: \"what is the status of Truck_02\" or "
-        "\"find the cleanest charging slot for Truck_07\"."
+        "\"find the cleanest charging slot for Truck_07\" (or use **amazon** / **fedex** / **ups**)."
     )
 
 
@@ -249,18 +314,13 @@ def format_timeout_response(command: ParsedCommand) -> str:
     return "The orchestrator timed out waiting for a downstream swarm response."
 
 
-def is_failed_delivery(status: object) -> bool:
-    delivery_status = getattr(status, "status", None)
-    if delivery_status is None:
-        return True
-    return str(delivery_status).lower().endswith("failed")
-
-
 def _pending_key(request_id: str) -> str:
     return f"pending_request:{request_id}"
 
 
-def save_pending_request(ctx: Context, request_id: str, sender: str, command: ParsedCommand) -> None:
+def save_pending_request(
+    ctx: Context, request_id: str, sender: str, command: ParsedCommand
+) -> None:
     pending = {
         "request_id": request_id,
         "sender": sender,
@@ -321,11 +381,11 @@ async def route_command(ctx: Context, sender: str, command: ParsedCommand) -> st
             timestamp=datetime.utcnow(),
         )
         status = await ctx.send(
-            TRUCK_STATUS_AGENT_ADDRESS,
+            SETTINGS.addresses.truck_status_agent,
             request,
-            timeout=ORCHESTRATOR_OUTBOUND_TIMEOUT_SECONDS,
+            timeout=SETTINGS.outbound_timeout_seconds,
         )
-        if is_failed_delivery(status):
+        if status.status == DeliveryStatus.FAILED:
             return (
                 f"I could not reach the truck status agent for {command.target_truck}. "
                 f"Details: {status.detail}."
@@ -346,11 +406,11 @@ async def route_command(ctx: Context, sender: str, command: ParsedCommand) -> st
         timestamp=datetime.utcnow(),
     )
     status = await ctx.send(
-        GRID_AGENT_ADDRESS,
+        SETTINGS.addresses.grid_agent,
         request,
-        timeout=ORCHESTRATOR_OUTBOUND_TIMEOUT_SECONDS,
+        timeout=SETTINGS.outbound_timeout_seconds,
     )
-    if is_failed_delivery(status):
+    if status.status == DeliveryStatus.FAILED:
         return (
             f"I could not reach the Grid Agent for {command.target_truck}. "
             f"Details: {status.detail}."
@@ -362,8 +422,50 @@ async def route_command(ctx: Context, sender: str, command: ParsedCommand) -> st
     )
 
 
+@orchestrator_agent.on_event("startup")
+async def startup(ctx: Context) -> None:
+    # ctx.agent is AgentRepresentation — use the real Agent for mailbox_client.
+    if _ORCH_MAILBOX and getattr(orchestrator_agent, "mailbox_client", None) is None:
+        ctx.logger.error(
+            "[Orchestrator] Mailbox is enabled but no mailbox client was created. "
+            "uAgents only enables mailbox when endpoints include the Agentverse mailbox URL — "
+            "do not pass `endpoint=` (ORCHESTRATOR_ENDPOINT / submit URL) together with mailbox. "
+            "Unset ORCHESTRATOR_ENDPOINT or run via run_orchestrator_for_inspector.py without "
+            "injecting a submit URL into the Agent constructor."
+        )
+    if "mailbox_auth" not in inspect.signature(Agent.__init__).parameters and (
+        os.getenv("ORCHESTRATOR_MAILBOX_KEY", "").strip()
+        or os.getenv("ORCHESTRATOR_MAILBOX_AUTH", "").strip()
+    ):
+        ctx.logger.warning(
+            "[Orchestrator] ORCHESTRATOR_MAILBOX_KEY/AUTH are set but this uAgents build "
+            "has no mailbox_auth; using mailbox=True. Complete Connect→Mailbox in Inspector, "
+            "or upgrade uAgents when that API ships."
+        )
+    ctx.logger.info(
+        f"[Orchestrator] Chat Protocol + swarm | address={ctx.agent.address} "
+        f"network={_orchestrator_network()} mailbox={_ORCH_MAILBOX} "
+        f"endpoint={_ORCH_ENDPOINT or 'mailbox'} "
+        f"grid={SETTINGS.addresses.grid_agent} "
+        f"truck_status={SETTINGS.addresses.truck_status_agent}"
+    )
+    # Local Agent Inspector does not support multi-agent Bureaus (run_all.py).
+    if _orch_port_raw.isdigit():
+        ctx.logger.info(
+            f"[Orchestrator] Local Agent Inspector (single process): "
+            f"{_agentverse_inspector_url(ctx.agent.address)}"
+        )
+    else:
+        ctx.logger.info(
+            "[Orchestrator] Agentverse Inspector does not support Agent Bureaus — "
+            "run_all.py cannot be used with Connect in Inspector. "
+            "For mailbox / Inspector testing, use: python run_orchestrator_for_inspector.py "
+            "(separate terminal; full swarm still needs run_all for grid/trucks/terminal)."
+        )
+
+
 @chat_protocol.on_message(ChatMessage)
-async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
+async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
     await ctx.send(
         sender,
         ChatAcknowledgement(
@@ -382,8 +484,6 @@ async def handle_message(ctx: Context, sender: str, msg: ChatMessage):
     ctx.logger.info(
         "hosted_chat_received "
         f"sender={sender} "
-        f"text={text!r} "
-        f"cleaned_text={cleaned_text!r} "
         f"intent={command.intent} "
         f"truck={command.target_truck} "
         f"goal={command.requested_goal}"
@@ -413,19 +513,25 @@ async def handle_auction_started(ctx: Context, sender: str, msg: AuctionStarted)
 
 
 @swarm_protocol.on_message(TruckStatusResponse)
-async def handle_truck_status_response(ctx: Context, sender: str, msg: TruckStatusResponse):
+async def handle_truck_status_response(
+    ctx: Context, sender: str, msg: TruckStatusResponse
+):
     pending = get_pending_request(ctx, msg.request_id)
     ctx.logger.info(
         f"truck_status_response sender={sender} truck={msg.truck_id} status={msg.truck_status}"
     )
     if not pending:
         return
-    await ctx.send(pending["sender"], create_text_chat(format_truck_status_response(msg)))
+    await ctx.send(
+        pending["sender"], create_text_chat(format_truck_status_response(msg))
+    )
     remove_pending_request(ctx, msg.request_id)
 
 
 @swarm_protocol.on_message(FinalAssignmentResponse)
-async def handle_final_assignment(ctx: Context, sender: str, msg: FinalAssignmentResponse):
+async def handle_final_assignment(
+    ctx: Context, sender: str, msg: FinalAssignmentResponse
+):
     pending = get_pending_request(ctx, msg.request_id)
     ctx.logger.info(
         f"final_assignment sender={sender} truck={msg.truck_id} status={msg.status}"
@@ -476,5 +582,5 @@ async def timeout_pending_requests(ctx: Context):
         remove_pending_request(ctx, request_id)
 
 
-agent.include(chat_protocol, publish_manifest=True)
-agent.include(swarm_protocol, publish_manifest=True)
+orchestrator_agent.include(chat_protocol, publish_manifest=True)
+orchestrator_agent.include(swarm_protocol, publish_manifest=True)
