@@ -106,6 +106,7 @@ def _calc_requested_kwh(battery_level: float, destination: str) -> float:
 
 def _make_on_grid(truck_name: str, requested_kwh: float, battery_ref: list, meta_ref: dict):
     async def _on_grid(ctx: Context, sender: str, signal: GridSignal):
+<<<<<<< Updated upstream
         battery_ref[0], distance = _truck_state_from_hub(truck_name, battery_ref[0])
         balance = _get_balance(truck_name)
         destination = meta_ref.get("destination", "Unknown")
@@ -120,6 +121,19 @@ def _make_on_grid(truck_name: str, requested_kwh: float, battery_ref: list, meta
             hours_until_deadline=meta_ref.get("hours_until_deadline", 4),
             destination=destination,
         )
+=======
+        battery_ref[0] = _soc_from_hub(truck_name, battery_ref[0])
+        result = decide_bid(battery_ref[0], signal.current_price, stress_label(signal.grid_stress))
+        # Enter auction phase: mark status=bidding immediately so the map updates
+        try:
+            supabase.table("trucks").update({
+                "status": "bidding",
+                "current_bid": result["bid_price"],
+                "current_soc": battery_ref[0],   # keep SoC fresh on bid entry
+            }).eq("name", truck_name).execute()
+        except Exception as e:
+            ctx.logger.warning(f"{truck_name}: failed to set bidding status — {e}")
+>>>>>>> Stashed changes
         bid = PowerBid(
             truck_id=truck_name,
             battery_level=battery_ref[0],
@@ -167,9 +181,32 @@ for _name, _seed, _port in _TRUCKS:
     _batt = [float(random.randint(10, 95))]
     _meta = {"hours_until_deadline": random.randint(20, 120), "destination": random.choice(DESTINATIONS)}
 
+<<<<<<< Updated upstream
     _agent.on_event("startup")(_make_startup(_name, _batt, _meta))
     _agent.on_message(model=GridSignal)(_make_on_grid(_name, 0, _batt, _meta))
     _agent.on_message(model=BidResponse)(_make_on_response(_name, _batt, _meta))
+=======
+    def _make_heartbeat(a: Agent, n: str, batt: list):
+        """Push current_soc + wallet balance to Supabase every heartbeat period."""
+        async def _heartbeat(ctx: Context):
+            updates: dict = {"current_soc": batt[0]}
+            try:
+                bal = ctx.ledger.query_bank_balance(a.wallet.address())
+                updates["balance"] = int(bal)
+            except Exception:
+                pass
+            try:
+                supabase.table("trucks").update(updates).eq("name", n).execute()
+            except Exception as e:
+                ctx.logger.warning(f"{n}: heartbeat push failed — {e}")
+        return _heartbeat
+
+    _agent.on_event("startup")(_make_startup(_agent, _name))
+    _agent.on_message(model=GridSignal)(_make_on_grid(_agent, _name, _kwh, _batt))
+    _agent.on_message(model=BidResponse)(_make_on_response(_agent, _name, _kwh, _batt))
+    # Heartbeat: push current_soc + balance every 15 s so the 3-D map label stays live
+    _agent.on_interval(period=15.0)(_make_heartbeat(_agent, _name, _batt))
+>>>>>>> Stashed changes
 
     _agents[_name] = _agent
 
