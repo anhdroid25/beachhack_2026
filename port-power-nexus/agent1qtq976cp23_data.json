@@ -1,0 +1,28 @@
+{
+    "pending_request_ids": [
+        "9d8c6138-a769-4a6f-adf5-6c2314753cc5",
+        "333222e2-d5bd-41b1-b6a7-9b458d41ec95"
+    ],
+    "pending_request:9d8c6138-a769-4a6f-adf5-6c2314753cc5": {
+        "request_id": "9d8c6138-a769-4a6f-adf5-6c2314753cc5",
+        "sender": "agent1q0hvvvtc6yy0wxe5hpxy5nse4lk6lwjeza8fl46d07nkkws6wc5dcpdlean",
+        "intent": "get_truck_status",
+        "target_truck": "Truck_01",
+        "requested_goal": "charge_slot",
+        "original_text": "Got it—session paused while awaiting swarm response for Truck_01 status. Standing by to relay the latest charging state when the swarm returns.",
+        "created_at": 1774200422.078568,
+        "expires_at": 1774200437.078568,
+        "stage": "dispatched"
+    },
+    "pending_request:333222e2-d5bd-41b1-b6a7-9b458d41ec95": {
+        "request_id": "333222e2-d5bd-41b1-b6a7-9b458d41ec95",
+        "sender": "agent1q0hvvvtc6yy0wxe5hpxy5nse4lk6lwjeza8fl46d07nkkws6wc5dcpdlean",
+        "intent": "start_auction_for_truck",
+        "target_truck": "Truck_01",
+        "requested_goal": "charge_slot",
+        "original_text": "Understood. I can coordinate: - `\"start auction\"` — fleet-wide - `\"start auction for Truck_01\"` — single truck - `\"what is the status of Truck_02\"` — status check Ready when you are.",
+        "created_at": 1774200430.3924599,
+        "expires_at": 1774200445.3924599,
+        "stage": "dispatched"
+    }
+}

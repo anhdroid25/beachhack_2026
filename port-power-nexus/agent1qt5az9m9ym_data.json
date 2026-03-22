@@ -1,0 +1,16 @@
+{
+    "pending_request_ids": [
+        "7a51bb02-7c8b-40df-a794-2b0863e7eca3"
+    ],
+    "pending_request:7a51bb02-7c8b-40df-a794-2b0863e7eca3": {
+        "request_id": "7a51bb02-7c8b-40df-a794-2b0863e7eca3",
+        "sender": "agent1q0hvvvtc6yy0wxe5hpxy5nse4lk6lwjeza8fl46d07nkkws6wc5dcpdlean",
+        "intent": "start_auction_for_truck",
+        "target_truck": "Truck_01",
+        "requested_goal": "charge_slot",
+        "original_text": "Truck_01 Grid Agent unreachable. Message delivery failed. Options: - Retry Truck_01 auction - Proceed with Truck_02, Truck_03 - Initiate fleet-wide auction - Escalate to operator Ready to execute.",
+        "created_at": 1774200521.623976,
+        "expires_at": 1774200536.623976,
+        "stage": "dispatched"
+    }
+}

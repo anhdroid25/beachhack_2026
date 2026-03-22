@@ -1,0 +1,16 @@
+{
+    "pending_request_ids": [
+        "fdf5e266-e1ff-47b2-9980-833572a5410c"
+    ],
+    "pending_request:fdf5e266-e1ff-47b2-9980-833572a5410c": {
+        "request_id": "fdf5e266-e1ff-47b2-9980-833572a5410c",
+        "sender": "agent1q0hvvvtc6yy0wxe5hpxy5nse4lk6lwjeza8fl46d07nkkws6wc5dcpdlean",
+        "intent": "start_auction_for_truck",
+        "target_truck": "Truck_01",
+        "requested_goal": "charge_slot",
+        "original_text": "Port-Power Nexus swarm standby ready. Command options available: - `start auction` — whole fleet - `start auction for Truck_01` — single truck - `what is the status of Truck_02` — status check Awaiting your directive.",
+        "created_at": 1774199541.5119524,
+        "expires_at": 1774199556.5119524,
+        "stage": "dispatched"
+    }
+}

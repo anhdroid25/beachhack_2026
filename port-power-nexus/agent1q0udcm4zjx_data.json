@@ -1,0 +1,16 @@
+{
+    "pending_request_ids": [
+        "b6a0828e-c3ef-44ed-a26f-b63e22d6985a"
+    ],
+    "pending_request:b6a0828e-c3ef-44ed-a26f-b63e22d6985a": {
+        "request_id": "b6a0828e-c3ef-44ed-a26f-b63e22d6985a",
+        "sender": "agent1q0hvvvtc6yy0wxe5hpxy5nse4lk6lwjeza8fl46d07nkkws6wc5dcpdlean",
+        "intent": "start_auction_for_truck",
+        "target_truck": "Truck_01",
+        "requested_goal": "charge_slot",
+        "original_text": "Got it. Port-Power Nexus swarm coordination ready. **Available commands:** - `start auction` — whole fleet auction - `start auction for Truck_01` — single truck auction - `what is the status of Truck_02` — truck status query Standing by.",
+        "created_at": 1774198212.9969337,
+        "expires_at": 1774198227.9969337,
+        "stage": "dispatched"
+    }
+}

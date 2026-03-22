@@ -53,9 +53,6 @@ function TruckCard({ truck, baysRows }) {
           DEPARTS IN: {truck.hours_until_deadline}m
         </div>
       )}
-      <div style={{ marginTop: 5, fontSize: 13, color: '#00ff88', fontFamily: 'Courier New, monospace', letterSpacing: 1 }}>
-        $ {Number(truck.balance ?? 0).toFixed(2)} credits
-      </div>
     </div>
   )
 }

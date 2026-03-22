@@ -61,7 +61,7 @@ ORCHESTRATOR_PORT = int(os.environ.get("ORCHESTRATOR_PORT", "8002"))
 # address from the startup log.
 ORCHESTRATOR_SEED = os.environ.get(
     "ORCHESTRATOR_SEED",
-    "testestswatqqqqqqqqqqqqqqqqqtttto",
+    "ahoiwenaow",
 )
 
 # `publish_manifest=True` is required for ASI:One / Agentverse protocol discovery; it can also
